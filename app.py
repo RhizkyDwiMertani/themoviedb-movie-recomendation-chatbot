@@ -1,3 +1,4 @@
+%%writefile app.py
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -5,6 +6,7 @@ import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer
+from deep_translator import GoogleTranslator
 
 # =====================================================
 # PAGE CONFIG
@@ -16,56 +18,43 @@ st.set_page_config(
 )
 
 st.title("🎬 Movie Recommendation Chatbot")
-st.caption("Hybrid TF-IDF + BERT | Mood + Genre Aware")
+st.caption("Hybrid TF-IDF + BERT | Mood, Genre, Popular, Random | Bilingual")
 
 # =====================================================
 # SIDEBAR HELP
 # =====================================================
 with st.sidebar:
     st.markdown("## 🤖 Cara Bertanya")
-    st.markdown("""
-Gunakan bahasa **Indonesia** atau **Inggris**.  
-Kamu bisa bertanya dengan berbagai gaya berikut 👇
-""")
 
-    st.markdown("### 🎭 Berdasarkan Mood")
+    st.markdown("### 🎭 Mood")
     st.markdown("""
 - `saya sedang sedih`
 - `aku lagi senang`
-- `mood horor`
-- `lagi pengen film romantis`
 """)
 
-    st.markdown("### 🎬 Berdasarkan Genre")
+    st.markdown("### 🎬 Genre")
     st.markdown("""
 - `rekomendasi horror`
-- `film action terbaik`
-- `anime sedih`
-- `film thriller`
+- `film action`
 """)
 
-    st.markdown("### 🔀 Kombinasi Mood + Genre")
+    st.markdown("### 🔀 Mood + Genre")
     st.markdown("""
-- `saya sedang sedih rekomendasikan horror`
-- `lagi senang tapi ingin nonton action`
-- `anime tapi sedih`
+- `saya sedang sedih ingin horror`
+- `lagi senang tapi mau nonton comedy`
 """)
 
-    st.markdown("### 🔍 Deskripsi Bebas (AI Search)")
+    st.markdown("### ⭐ Populer / 🎲 Random")
     st.markdown("""
-- `film tentang perang antar hewan`
-- `movie about survival in forest`
-- `film tentang keluarga yang berpisah`
+- `rekomendasi film terbaik`
+- `random horror`
 """)
 
-    st.markdown("### 🧠 Mirip Film Tertentu")
+    st.markdown("### 🔍 Deskripsi Bebas")
     st.markdown("""
-- `movies like Titanic`
-- `film mirip Inception`
+- `film tentang titan`
+- `movie about giant monsters`
 """)
-
-    st.markdown("---")
-    st.caption("🎬 Movie Recommendation Chatbot\n\nHybrid TF-IDF + BERT")
 
 # =====================================================
 # LOAD DATA
@@ -75,31 +64,48 @@ def load_data():
     df = pd.read_csv("tmdb_movies.csv")
     df = df.drop_duplicates(subset="title")
 
-    for col in ["genres", "overview"]:
+    for col in ["title", "overview", "genres"]:
         df[col] = df[col].fillna("")
+
     for col in ["vote_count", "vote_average"]:
         df[col] = df[col].fillna(0)
 
-    df["tfidf_text"] = df["title"] + " " + df["overview"] + " " + df["genres"]
-    df["bert_text"] = df["overview"] + " " + df["genres"]
+    df["search_text"] = (
+        df["title"].str.lower() + " " + df["overview"].str.lower()
+    )
 
     return df.reset_index(drop=True)
 
 df = load_data()
 
 # =====================================================
-# TF-IDF
+# LANGUAGE & TRANSLATION
+# =====================================================
+INDO_WORDS = ["film", "tentang", "saya", "ingin", "sedih", "senang", "rekomendasi"]
+
+def is_indonesian(text):
+    return any(w in text for w in INDO_WORDS)
+
+def translate_to_english(text):
+    try:
+        return GoogleTranslator(source="id", target="en").translate(text)
+    except:
+        return text
+
+# =====================================================
+# TF-IDF (TITLE + OVERVIEW)
 # =====================================================
 @st.cache_resource
 def build_tfidf(texts):
     vectorizer = TfidfVectorizer(
         ngram_range=(1, 2),
-        max_features=15000
+        max_features=20000,
+        stop_words="english"
     )
     matrix = vectorizer.fit_transform(texts)
     return vectorizer, matrix
 
-tfidf_model, tfidf_matrix = build_tfidf(df["tfidf_text"].tolist())
+tfidf_model, tfidf_matrix = build_tfidf(df["search_text"].tolist())
 
 def tfidf_search(query, n=5):
     vec = tfidf_model.transform([query])
@@ -108,19 +114,14 @@ def tfidf_search(query, n=5):
     return df.iloc[idx]
 
 # =====================================================
-# BERT
+# BERT (FALLBACK)
 # =====================================================
 @st.cache_resource
 def load_bert():
     return SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
 bert_model = load_bert()
-
-@st.cache_resource
-def build_bert_embeddings(texts):
-    return bert_model.encode(texts, show_progress_bar=False)
-
-bert_embeddings = build_bert_embeddings(df["bert_text"].tolist())
+bert_embeddings = bert_model.encode(df["search_text"].tolist(), show_progress_bar=False)
 
 def bert_search(query, n=5):
     vec = bert_model.encode([query])
@@ -129,7 +130,7 @@ def bert_search(query, n=5):
     return df.iloc[idx]
 
 # =====================================================
-# RATING
+# WEIGHTED RATING
 # =====================================================
 C = df["vote_average"].mean()
 MIN_VOTES = df["vote_count"].quantile(0.70)
@@ -168,17 +169,10 @@ MOODS = {
     "seram": ["horror"]
 }
 
-MOOD_STYLE_HINT = {
-    "sad": ["drama", "psychological"],
-    "sedih": ["drama", "psychological"]
-}
-
 def extract_genre(text):
     for g in GENRES:
         if g in text:
             return g
-    if "anime" in text:
-        return "animation"
     return None
 
 def extract_mood(text):
@@ -187,22 +181,15 @@ def extract_mood(text):
             return m
     return None
 
-def filter_genre_and_mood(genre, mood):
-    data = df[df["genres"].str.lower().str.contains(genre, na=False)]
-
-    if mood in MOOD_STYLE_HINT:
-        mask = False
-        for tag in MOOD_STYLE_HINT[mood]:
-            mask |= data["genres"].str.lower().str.contains(tag, na=False)
-        if mask is not False and mask.any():
-            data = data[mask]
-
-    if data.empty:
-        return None
-
-    data = data[data["vote_count"] >= 30]
-    data["score"] = data.apply(weighted_rating, axis=1)
-    return data.sort_values("score", ascending=False).head(5)
+# =====================================================
+# INTENT DETECTION
+# =====================================================
+def detect_intent(text):
+    if any(k in text for k in ["random", "acak"]):
+        return "random"
+    if any(k in text for k in ["rekomendasi", "recommended", "terbaik", "popular"]):
+        return "popular"
+    return "normal"
 
 # =====================================================
 # UI CARD
@@ -217,17 +204,20 @@ def movie_card(row):
 """
 
 # =====================================================
-# CHAT
+# CHAT STATE
 # =====================================================
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-for m in st.session_state.messages:
-    with st.chat_message(m["role"]):
-        st.markdown(m["content"], unsafe_allow_html=True)
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"], unsafe_allow_html=True)
 
 user_input = st.chat_input("Ask in Indonesian or English...")
 
+# =====================================================
+# CHAT LOGIC (INTENT ROUTER)
+# =====================================================
 if user_input:
     with st.chat_message("user"):
         st.markdown(user_input)
@@ -236,53 +226,55 @@ if user_input:
     text = user_input.lower()
     genre = extract_genre(text)
     mood = extract_mood(text)
-    handled = False
+    intent = detect_intent(text)
 
-    # 1️⃣ GENRE + MOOD
-    if genre and mood:
-        movies = filter_genre_and_mood(genre, mood)
-        if movies is not None:
-            response = f"🎬 **{genre.title()} movies for '{mood}' mood**\n\n"
-            for _, r in movies.iterrows():
-                response += movie_card(r)
-        else:
-            response = "❌ No movies found."
-        handled = True
+    # 1️⃣ MOOD + GENRE
+    if mood and genre:
+        mask = (
+            df["genres"].str.lower().str.contains(genre, na=False)
+        )
+        mood_mask = False
+        for g in MOODS[mood]:
+            mood_mask |= df["genres"].str.lower().str.contains(g, na=False)
+        movies = top_movies(mask & mood_mask)
+        response = f"🎬 **{genre.title()} movies for '{mood}' mood**\n\n"
 
     # 2️⃣ MOOD ONLY
     elif mood:
-        mask = False
+        mood_mask = False
         for g in MOODS[mood]:
-            mask |= df["genres"].str.lower().str.contains(g, na=False)
-        movies = top_movies(mask)
+            mood_mask |= df["genres"].str.lower().str.contains(g, na=False)
+        movies = top_movies(mood_mask)
         response = f"🎭 **Movies for '{mood}' mood**\n\n"
-        for _, r in movies.iterrows():
-            response += movie_card(r)
-        handled = True
 
-    # 3️⃣ GENRE ONLY
-    elif genre:
-        mask = df["genres"].str.lower().str.contains(genre, na=False)
+    # 3️⃣ POPULAR
+    elif intent == "popular":
+        mask = df["genres"].str.lower().str.contains(genre, na=False) if genre else None
         movies = top_movies(mask)
-        response = f"⭐ **Top {genre.title()} movies**\n\n"
-        for _, r in movies.iterrows():
-            response += movie_card(r)
-        handled = True
+        response = "⭐ **Top Recommended Movies**\n\n"
 
-    # 4️⃣ TF-IDF
-    elif len(text.split()) >= 4:
-        movies = tfidf_search(user_input)
+    # 4️⃣ RANDOM
+    elif intent == "random":
+        data = df
+        if genre:
+            data = df[df["genres"].str.lower().str.contains(genre, na=False)]
+        movies = data.sample(min(5, len(data)))
+        response = "🎲 **Random Movies**\n\n"
+
+    # 5️⃣ DESCRIPTIVE (TF-IDF)
+    elif len(text.split()) >= 5:
+        query = translate_to_english(text) if is_indonesian(text) else text
+        movies = tfidf_search(query)
         response = "🔍 **Movies matching your description**\n\n"
-        for _, r in movies.iterrows():
-            response += movie_card(r)
-        handled = True
 
-    # 5️⃣ BERT
-    if not handled:
-        movies = bert_search(user_input)
+    # 6️⃣ FALLBACK (BERT)
+    else:
+        query = translate_to_english(text) if is_indonesian(text) else text
+        movies = bert_search(query)
         response = "🧠 **Movies matching your request**\n\n"
-        for _, r in movies.iterrows():
-            response += movie_card(r)
+
+    for _, r in movies.iterrows():
+        response += movie_card(r)
 
     with st.chat_message("assistant"):
         st.markdown(response, unsafe_allow_html=True)
