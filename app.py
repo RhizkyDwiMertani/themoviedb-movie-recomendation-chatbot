@@ -19,6 +19,55 @@ st.title("🎬 Movie Recommendation Chatbot")
 st.caption("Hybrid TF-IDF + BERT | Mood + Genre Aware")
 
 # =====================================================
+# SIDEBAR HELP
+# =====================================================
+with st.sidebar:
+    st.markdown("## 🤖 Cara Bertanya")
+    st.markdown("""
+Gunakan bahasa **Indonesia** atau **Inggris**.  
+Kamu bisa bertanya dengan berbagai gaya berikut 👇
+""")
+
+    st.markdown("### 🎭 Berdasarkan Mood")
+    st.markdown("""
+- `saya sedang sedih`
+- `aku lagi senang`
+- `mood horor`
+- `lagi pengen film romantis`
+""")
+
+    st.markdown("### 🎬 Berdasarkan Genre")
+    st.markdown("""
+- `rekomendasi horror`
+- `film action terbaik`
+- `anime sedih`
+- `film thriller`
+""")
+
+    st.markdown("### 🔀 Kombinasi Mood + Genre")
+    st.markdown("""
+- `saya sedang sedih rekomendasikan horror`
+- `lagi senang tapi ingin nonton action`
+- `anime tapi sedih`
+""")
+
+    st.markdown("### 🔍 Deskripsi Bebas (AI Search)")
+    st.markdown("""
+- `film tentang perang antar hewan`
+- `movie about survival in forest`
+- `film tentang keluarga yang berpisah`
+""")
+
+    st.markdown("### 🧠 Mirip Film Tertentu")
+    st.markdown("""
+- `movies like Titanic`
+- `film mirip Inception`
+""")
+
+    st.markdown("---")
+    st.caption("🎬 Movie Recommendation Chatbot\n\nHybrid TF-IDF + BERT")
+
+# =====================================================
 # LOAD DATA
 # =====================================================
 @st.cache_data
